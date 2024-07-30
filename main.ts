@@ -1,5 +1,4 @@
-import { Plugin, PluginSettingTab, Setting, Notice, App, WorkspaceLeaf, MarkdownView } from 'obsidian';
-import axios from 'axios';
+import { Plugin, PluginSettingTab, Setting, requestUrl, Notice, App } from 'obsidian';
 
 interface ReadAloudPluginSettings {
     apiKey: string;
@@ -11,81 +10,42 @@ interface ReadAloudPluginSettings {
 const DEFAULT_SETTINGS: ReadAloudPluginSettings = {
     apiKey: '',
     model: 'tts-1',
-    voice: 'echo',
-    speed: 1.0,
-};
+    voice: 'alloy',
+    speed: 1.0
+}
 
 export default class ReadAloudPlugin extends Plugin {
     settings: ReadAloudPluginSettings = DEFAULT_SETTINGS;
 
     async onload() {
-        console.log('loading Read Aloud plugin');
-
         await this.loadSettings();
+        this.addSettingTab(new ReadAloudSettingTab(this.app, this));
 
         this.addCommand({
             id: 'read-aloud',
-            name: 'Read Aloud',
+            name: 'Read selected text aloud',
             editorCallback: (editor, view) => {
                 this.speakText(editor.getSelection());
             }
         });
-
-        this.addSettingTab(new ReadAloudSettingTab(this.app, this));
-
-        this.registerDomEvent(document, 'keydown', (event: KeyboardEvent) => {
-            if (event.key === 'R' && event.ctrlKey && event.shiftKey) {
-                const activeLeaf = this.app.workspace.getActiveViewOfType(MarkdownView);
-                if (activeLeaf) {
-                    const selectedText = window.getSelection()?.toString() || '';
-                    this.speakText(selectedText);
-                } else {
-                    const editor = this.app.workspace.activeEditor?.editor;
-                    if (editor) {
-                        this.speakText(editor.getSelection());
-                    }
-                }
-            }
-        });
-    }
-
-    onunload() {
-        console.log('unloading Read Aloud plugin');
-    }
-
-    async speakText(text: string) {
-        if (!text) {
-            new Notice('Please select some text first.');
-            return;
-        }
-
-        const charCount = text.length;
-        const costPerMillionChars = this.settings.model === 'tts-1' ? 15.0 : 30.0;
-        const cost = (charCount / 1_000_000) * costPerMillionChars;
-
-        new Notice(`Text is being sent to OpenAI for processing. Estimated cost: $${cost.toFixed(4)}`);
-
-        try {
-            const response = await this.sendTextToOpenAI(text);
-            this.playAudio(response.data as ArrayBuffer);
-        } catch (error) {
-            console.error('Error:', error);
-            new Notice('Error: Unable to read aloud the selected text.');
-        }
     }
 
     async sendTextToOpenAI(text: string) {
         try {
-            const response = await axios.post('https://api.openai.com/v1/audio/speech', {
-                model: this.settings.model,
-                input: text,
-                voice: this.settings.voice,
-                speed: this.settings.speed
-            }, {
+            const response = await requestUrl({
+                url: 'https://api.openai.com/v1/audio/speech',
+                method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${this.settings.apiKey}`,
                     'Content-Type': 'application/json'
                 },
+                body: JSON.stringify({
+                    model: this.settings.model,
+                    input: text,
+                    voice: this.settings.voice,
+                    speed: this.settings.speed
+                }),
+                contentType: 'application/json',
                 responseType: 'arraybuffer'
             });
             return response;
@@ -95,30 +55,33 @@ export default class ReadAloudPlugin extends Plugin {
         }
     }
 
-    playAudio(data: ArrayBuffer) {
-        const blob = new Blob([data], { type: 'audio/mp3' });
-        const url = window.URL.createObjectURL(blob);
-        const audio = new Audio(url);
-        audio.play();
+    async speakText(text: string) {
+        try {
+            const response = await this.sendTextToOpenAI(text);
+            this.playAudio(response.arrayBuffer);
+        } catch (error) {
+            new Notice('Failed to convert text to speech. Check console for details.');
+        }
+    }
+
+    playAudio(arrayBuffer: ArrayBuffer) {
+        const audioContext = new AudioContext();
+        audioContext.decodeAudioData(arrayBuffer, (buffer) => {
+            const source = audioContext.createBufferSource();
+            source.buffer = buffer;
+            source.connect(audioContext.destination);
+            source.start(0);
+        }, (error) => {
+            console.error('Error decoding audio data:', error);
+        });
     }
 
     async loadSettings() {
-        try {
-            this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-        } catch (error) {
-            console.error('Failed to load settings:', error);
-            new Notice('Failed to load settings. Please check your settings file.');
-            this.settings = DEFAULT_SETTINGS;
-        }
+        this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
     }
 
     async saveSettings() {
-        try {
-            await this.saveData(this.settings);
-        } catch (error) {
-            console.error('Failed to save settings:', error);
-            new Notice('Failed to save settings. Please try again.');
-        }
+        await this.saveData(this.settings);
     }
 }
 
@@ -133,7 +96,7 @@ class ReadAloudSettingTab extends PluginSettingTab {
     display(): void {
         const { containerEl } = this;
 
-        containerEl.innerHTML = '';
+        containerEl.empty();
 
         new Setting(containerEl)
             .setName('Read aloud plugin settings')
@@ -146,7 +109,8 @@ class ReadAloudSettingTab extends PluginSettingTab {
         infoEl.createEl('br');
         infoEl.createEl('br');
         infoEl.createSpan({ text: 'The URL where your text is sent is:' });
-        infoEl.createEl('a', { text: 'https://api.openai.com/v1/audio/speech', href: 'https://api.openai.com/v1/audio/speech', attr: { target: '_blank' } });
+        const link = infoEl.createEl('a', { text: 'https://api.openai.com/v1/audio/speech', href: 'https://api.openai.com/v1/audio/speech' });
+        link.setAttribute('target', '_blank');
         infoEl.createEl('br');
         infoEl.createEl('br');
 
@@ -225,11 +189,9 @@ class ReadAloudSettingTab extends PluginSettingTab {
         supportEl.createSpan({ text: 'Hi, I am AlyxO. If you find this plugin useful, you can support me by buying me a coffee.' });
         supportEl.createEl('br');
 
-        const coffeeLink = containerEl.createEl('a', { href: 'https://buymeacoffee.com/alyxo', attr: { target: '_blank' } });
-        const coffeeImg = document.createElement('img');
-        coffeeImg.src = 'https://www.buymeacoffee.com/assets/img/custom_images/yellow_img.png';
-        coffeeImg.alt = 'Buy Me a Coffee';
-        coffeeLink.appendChild(coffeeImg);
+        const coffeeLink = containerEl.createEl('a', { href: 'https://buymeacoffee.com/alyxo' });
+        coffeeLink.setAttribute('target', '_blank');
+        const coffeeImg = coffeeLink.createEl('img', { attr: { src: 'https://www.buymeacoffee.com/assets/img/custom_images/yellow_img.png', alt: 'Buy Me a Coffee' } });
         containerEl.appendChild(coffeeLink);
     }
 }

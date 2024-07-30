@@ -47,6 +47,9 @@ declare module 'obsidian' {
 
     export class App {
         workspace: Workspace;
+        vault: Vault;
+        metadataCache: MetadataCache;
+        fileManager: FileManager;
     }
 
     export class Workspace {
@@ -105,6 +108,7 @@ declare module 'obsidian' {
     }
 
     export interface HTMLElement {
+        empty(): void;
         createDiv(): HTMLElement;
         createSpan(options: { text: string, cls?: string }): HTMLElement;
         createEl<K extends keyof HTMLElementTagNameMap>(tagName: K, options?: { text?: string, cls?: string, attr?: Record<string, string>, href?: string }): HTMLElementTagNameMap[K];
@@ -112,6 +116,8 @@ declare module 'obsidian' {
         setAttribute(name: string, value: string): void;
         innerHTML: string;
     }
+
+    export function requestUrl(request: RequestUrlParam): Promise<RequestUrlResponse>;
 }
 
 interface HTMLImageElement extends HTMLElement {
@@ -120,6 +126,7 @@ interface HTMLImageElement extends HTMLElement {
 }
 
 interface HTMLAnchorElement extends HTMLElement {
+    createEl<K extends keyof HTMLElementTagNameMap>(tagName: K, options?: { text?: string, cls?: string, attr?: Record<string, string>, href?: string }): HTMLElementTagNameMap[K];
     href: string;
     target: string;
 }
